@@ -1,58 +1,67 @@
-import { GPUData } from '../types/gpu';
+import { GPUData, CPUData } from '../types/gpu';
 
 interface SummaryCardProps {
   gpus: GPUData[];
+  cpus: CPUData[];
 }
 
-const SummaryCard = ({ gpus }: SummaryCardProps) => {
-  if (gpus.length === 0) return null;
+const SummaryCard = ({ gpus, cpus }: SummaryCardProps) => {
+  if (gpus.length === 0 && cpus.length === 0) return null;
 
-  const totalTemp = gpus.reduce((sum, gpu) => sum + gpu.temp, 0);
-  const maxTemp = Math.max(...gpus.map(gpu => gpu.temp));
+  const totalGpuTemp = gpus.reduce((sum, gpu) => sum + gpu.temp, 0);
+  const maxGpuTemp = gpus.length > 0 ? Math.max(...gpus.map(gpu => gpu.temp)) : 0;
   const totalPower = gpus.reduce((sum, gpu) => sum + gpu.powerDraw, 0);
+  const avgCpuUtil = cpus.length > 0 ? cpus.reduce((sum, cpu) => sum + cpu.utilization, 0) / cpus.length : 0;
+  const totalMemoryUsed = cpus.reduce((sum, cpu) => sum + cpu.memoryUsed, 0);
+  const totalMemory = cpus.reduce((sum, cpu) => sum + cpu.memoryTotal, 0);
 
   return (
     <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4">
-      {/* Avg Temp */}
+      {/* CPU Usage */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500/10 to-cyan-500/10 border border-emerald-500/20 p-6 text-center backdrop-blur-sm">
+        <p className="text-sm text-gray-400 uppercase tracking-wider mb-2">CPU Usage</p>
+        <p className={`text-3xl font-bold ${avgCpuUtil > 80 ? 'text-red-500' : avgCpuUtil > 60 ? 'text-orange-400' : 'text-white'}`}>
+          {avgCpuUtil.toFixed(1)}%
+        </p>
+        <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20">
+          <CpuIcon />
+        </div>
+      </div>
+
+      {/* Memory */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-purple-500/10 to-indigo-500/10 border border-purple-500/20 p-6 text-center backdrop-blur-sm">
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-white/5 to-transparent animate-pulse" />
-        <p className="text-sm text-gray-400 uppercase tracking-wider mb-2">Avg Temperature</p>
+        <p className="text-sm text-gray-400 uppercase tracking-wider mb-2">Memory</p>
         <p className="text-3xl font-bold text-white">
-          {(totalTemp / gpus.length).toFixed(1)}°C
+          {(totalMemoryUsed / 1024).toFixed(1)} / {(totalMemory / 1024).toFixed(1)}
         </p>
         <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20">
-          <ThermometerIcon />
+          <MemoryIcon />
         </div>
       </div>
 
-      {/* Max Temp */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-500/10 to-orange-500/10 border border-red-500/20 p-6 text-center backdrop-blur-sm">
-        <p className="text-sm text-gray-400 uppercase tracking-wider mb-2">Max Temperature</p>
-        <p className={`text-3xl font-bold ${maxTemp > 80 ? 'text-red-500' : maxTemp > 60 ? 'text-orange-400' : 'text-white'}`}>
-          {maxTemp.toFixed(1)}°C
-        </p>
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20">
-          <ThermometerIcon />
-        </div>
-      </div>
+      {/* GPU Temp */}
+      {gpus.length > 0 && (
+        <>
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-500/10 to-orange-500/10 border border-red-500/20 p-6 text-center backdrop-blur-sm">
+            <p className="text-sm text-gray-400 uppercase tracking-wider mb-2">Max GPU Temp</p>
+            <p className={`text-3xl font-bold ${maxGpuTemp > 80 ? 'text-red-500' : maxGpuTemp > 60 ? 'text-orange-400' : 'text-white'}`}>
+              {maxGpuTemp.toFixed(1)}°C
+            </p>
+            <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20">
+              <ThermometerIcon />
+            </div>
+          </div>
 
-      {/* Total Power */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-cyan-500/10 to-blue-500/10 border border-cyan-500/20 p-6 text-center backdrop-blur-sm">
-        <p className="text-sm text-gray-400 uppercase tracking-wider mb-2">Total Power</p>
-        <p className="text-3xl font-bold text-white">{totalPower.toFixed(1)}W</p>
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20">
-          <BoltIcon />
-        </div>
-      </div>
-
-      {/* GPU Count */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border border-emerald-500/20 p-6 text-center backdrop-blur-sm">
-        <p className="text-sm text-gray-400 uppercase tracking-wider mb-2">Active GPUs</p>
-        <p className="text-3xl font-bold text-white">{gpus.length}</p>
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20">
-          <GPUIcon />
-        </div>
-      </div>
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-cyan-500/10 to-blue-500/10 border border-cyan-500/20 p-6 text-center backdrop-blur-sm">
+            <p className="text-sm text-gray-400 uppercase tracking-wider mb-2">Total Power</p>
+            <p className="text-3xl font-bold text-white">{totalPower.toFixed(1)}W</p>
+            <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20">
+              <BoltIcon />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };
@@ -69,14 +78,18 @@ const BoltIcon = () => (
   </svg>
 );
 
-const GPUIcon = () => (
+const CpuIcon = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <rect x="2" y="2" width="20" height="16" rx="2" />
-    <path d="M6 6h.01" />
-    <path d="M18 6h.01" />
-    <path d="M2 22h20" />
-    <path d="M10 22v-5" />
-    <path d="M14 22v-5" />
+    <rect x="4" y="4" width="16" height="16" rx="2" />
+    <path d="M9 9h6v6H9z" />
+    <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3" />
+  </svg>
+);
+
+const MemoryIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <rect x="2" y="6" width="20" height="12" rx="2" />
+    <path d="M6 10v4M10 10v4M14 10v4M18 10v4" />
   </svg>
 );
 

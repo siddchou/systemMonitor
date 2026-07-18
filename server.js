@@ -1,5 +1,5 @@
-const http = require('http');
-const { execSync } = require('child_process');
+import http from 'http';
+import { execSync, spawn } from 'child_process';
 
 // Subsystem ID to manufacturer lookup (last 4 chars of SUBSYS)
 const MANUFACTURERS = {
@@ -27,6 +27,42 @@ function getManufacturer(subsysId) {
     }
     const vendor = id.slice(-4);
     return MANUFACTURERS[vendor] || 'Unknown';
+}
+
+// Get CPU data
+function getCPUs() {
+    try {
+        const cpuInfo = execSync(
+            'powershell -Command "Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors,LoadPercentage,CurrentClockSpeed | Format-List"',
+            { encoding: 'utf8' }
+        );
+        const memInfo = execSync(
+            'powershell -Command "Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory | Format-List"',
+            { encoding: 'utf8' }
+        );
+
+        function parseProp(name, text) {
+            const match = text.match(new RegExp(`${name}\\s*:\\s*(.+)$`, 'm'));
+            return match ? match[1].trim() : '0';
+        }
+
+        const totalMemMB = parseFloat(parseProp('TotalVisibleMemorySize', memInfo)) / 1024;
+        const freeMemMB = parseFloat(parseProp('FreePhysicalMemory', memInfo)) / 1024;
+
+        return [{
+            id: 0,
+            name: parseProp('Name', cpuInfo),
+            cores: parseInt(parseProp('NumberOfCores', cpuInfo)) || 0,
+            logicalProcessors: parseInt(parseProp('NumberOfLogicalProcessors', cpuInfo)) || 0,
+            utilization: parseFloat(parseProp('LoadPercentage', cpuInfo)) || 0,
+            clockSpeed: parseFloat(parseProp('CurrentClockSpeed', cpuInfo)) || 0,
+            memoryUsed: totalMemMB - freeMemMB,
+            memoryTotal: totalMemMB
+        }];
+    } catch (error) {
+        console.error('Error fetching CPUs:', error.message);
+        return [];
+    }
 }
 
 // Get GPU data
@@ -206,6 +242,9 @@ const server = http.createServer((req, res) => {
     if (req.url === '/api/gpus') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(getGPUs()));
+    } else if (req.url === '/api/cpus') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(getCPUs()));
     } else {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(html);
@@ -215,5 +254,5 @@ const server = http.createServer((req, res) => {
 const PORT = 8080;
 server.listen(PORT, () => {
     console.log('GPU Monitor on port ' + PORT);
-    setTimeout(() => require('child_process').spawn('explorer', ['http://localhost:' + PORT]), 500);
+    setTimeout(() => spawn('explorer', ['http://localhost:' + PORT]), 500);
 });

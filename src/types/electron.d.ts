@@ -13,6 +13,7 @@ import { GPUData } from './gpu';
 declare global {
   namespace ipcRenderer {
     function invoke(channel: 'get-gpus'): Promise<GPUData[]>;
+    function invoke(channel: 'get-cpus'): Promise<CPUData[]>;
   }
 }
 

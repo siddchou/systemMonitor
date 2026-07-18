@@ -30,6 +30,42 @@ function getManufacturer(subsysId: string): string {
   return MANUFACTURERS[vendor] || 'Unknown';
 }
 
+// Get CPU data
+function getCPUs(): any[] {
+  try {
+    const cpuInfo = execSync(
+      'powershell -Command "Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors,LoadPercentage,CurrentClockSpeed | Format-List"',
+      { encoding: 'utf8' }
+    );
+    const memInfo = execSync(
+      'powershell -Command "Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory | Format-List"',
+      { encoding: 'utf8' }
+    );
+
+    function parseProp(name: string, text: string): string {
+      const match = text.match(new RegExp(`${name}\\s*:\\s*(.+)$`, 'm'));
+      return match ? match[1].trim() : '0';
+    }
+
+    const totalMemMB = parseFloat(parseProp('TotalVisibleMemorySize', memInfo)) / 1024;
+    const freeMemMB = parseFloat(parseProp('FreePhysicalMemory', memInfo)) / 1024;
+
+    return [{
+      id: 0,
+      name: parseProp('Name', cpuInfo),
+      cores: parseInt(parseProp('NumberOfCores', cpuInfo)) || 0,
+      logicalProcessors: parseInt(parseProp('NumberOfLogicalProcessors', cpuInfo)) || 0,
+      utilization: parseFloat(parseProp('LoadPercentage', cpuInfo)) || 0,
+      clockSpeed: parseFloat(parseProp('CurrentClockSpeed', cpuInfo)) || 0,
+      memoryUsed: totalMemMB - freeMemMB,
+      memoryTotal: totalMemMB
+    }];
+  } catch (error) {
+    console.error('Error fetching CPUs:', error);
+    return [];
+  }
+}
+
 // Get GPU data
 function getGPUs(): any[] {
   try {
@@ -66,6 +102,9 @@ export function createAPIServer(): Promise<{ port: number; stop: () => void }> {
       if (req.url === '/api/gpus') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(getGPUs()));
+      } else if (req.url === '/api/cpus') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(getCPUs()));
       } else if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('OK');

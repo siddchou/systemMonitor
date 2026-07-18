@@ -3,13 +3,10 @@ import * as path from 'node:path';
 import * as url from 'node:url';
 import { execSync } from 'node:child_process';
 
-// Setup __dirname and __filename for ES modules
 const __filename = url.fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Subsystem ID to manufacturer lookup (last 4 chars of SUBSYS)
 const MANUFACTURERS: Record<string, string> = {
-  // Core Silicon / Core Chipset Manufacturers
   '1002': 'AMD',
   '10DE': 'NVIDIA',
   '8086': 'Intel',
@@ -17,8 +14,6 @@ const MANUFACTURERS: Record<string, string> = {
   '5143': 'Qualcomm',
   '10EC': 'Realtek',
   '1106': 'VIA',
-
-  // System & Component Board Manufacturers
   '1025': 'Acer',
   '1B49': 'Albatron',
   '196E': 'AORUS',
@@ -55,7 +50,43 @@ function getManufacturer(subsysId: string): string {
   return MANUFACTURERS[vendor] || 'Unknown';
 }
 
-// Get GPU data
+function getCPUs(): Promise<any[]> {
+  return new Promise((resolve) => {
+    try {
+      const cpuInfo = execSync(
+        'powershell -Command "Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors,LoadPercentage,CurrentClockSpeed | Format-List"',
+        { encoding: 'utf8' }
+      );
+      const memInfo = execSync(
+        'powershell -Command "Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory | Format-List"',
+        { encoding: 'utf8' }
+      );
+
+      function parseProp(name: string, text: string): string {
+        const match = text.match(new RegExp(`${name}\\s*:\\s*(.+)$`, 'm'));
+        return match ? match[1].trim() : '0';
+      }
+
+      const totalMemMB = parseFloat(parseProp('TotalVisibleMemorySize', memInfo)) / 1024;
+      const freeMemMB = parseFloat(parseProp('FreePhysicalMemory', memInfo)) / 1024;
+
+      resolve([{
+        id: 0,
+        name: parseProp('Name', cpuInfo),
+        cores: parseInt(parseProp('NumberOfCores', cpuInfo)) || 0,
+        logicalProcessors: parseInt(parseProp('NumberOfLogicalProcessors', cpuInfo)) || 0,
+        utilization: parseFloat(parseProp('LoadPercentage', cpuInfo)) || 0,
+        clockSpeed: parseFloat(parseProp('CurrentClockSpeed', cpuInfo)) || 0,
+        memoryUsed: totalMemMB - freeMemMB,
+        memoryTotal: totalMemMB
+      }]);
+    } catch (error) {
+      console.error('Error fetching CPUs:', error);
+      resolve([]);
+    }
+  });
+}
+
 function getGPUs(): Promise<any[]> {
   return new Promise((resolve) => {
     try {
@@ -103,22 +134,25 @@ function createWindow() {
       contextIsolation: false,
     },
     show: false,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 12, y: 16 },
   });
 
-  // Load the app from dist/renderer/src/index.html
-  const htmlPath = path.join(__dirname, 'renderer', 'src', 'index.html');
-  console.log('Loading HTML from:', htmlPath);
-  mainWindow.loadFile(htmlPath);
+  if (process.env.NODE_ENV === 'development') {
+    mainWindow.loadURL('http://localhost:5173');
+  } else {
+    const htmlPath = path.join(__dirname, 'renderer', 'index.html');
+    mainWindow.loadFile(htmlPath);
+  }
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show();
   });
 
-  // Handle GPU data requests from renderer
   ipcMain.handle('get-gpus', async () => {
     return await getGPUs();
+  });
+
+  ipcMain.handle('get-cpus', async () => {
+    return await getCPUs();
   });
 
   mainWindow.on('closed', () => {
@@ -138,9 +172,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
-});
-
-// Graceful shutdown
-app.on('before-quit', () => {
-  console.log('GPU Monitor shutting down...');
 });

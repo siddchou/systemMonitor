@@ -3,45 +3,49 @@
 import { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import GPUCard from './components/GPUCard';
+import CPUCard from './components/CPUCard';
 import SummaryCard from './components/SummaryCard';
 import GPUChart from './components/GPUChart';
-import { GPUData, GPUHistory } from './types/gpu';
+import { GPUData, GPUHistory, CPUData, CPUHistory } from './types/gpu';
 
 // Get ipcRenderer from Electron
 const { ipcRenderer } = window.require('electron');
 
 function App() {
   const [gpus, setGPUs] = useState<GPUData[]>([]);
-  const [tempHistory, setTempHistory] = useState<GPUHistory>({});
+  const [cpus, setCpus] = useState<CPUData[]>([]);
+  const [gpuHistory, setGpuHistory] = useState<GPUHistory>({});
+  const [cpuHistory, setCpuHistory] = useState<CPUHistory>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Initial load
-    loadGPUs();
+    loadData();
 
     // Start polling for updates every second
-    const intervalId = window.setInterval(loadGPUs, 1000);
+    const intervalId = window.setInterval(loadData, 1000);
 
     return () => {
       window.clearInterval(intervalId);
     };
   }, []);
 
-  async function loadGPUs() {
+  async function loadData() {
     try {
-      const data: GPUData[] = await ipcRenderer.invoke('get-gpus');
+      const [gpuData, cpuData] = await Promise.all([
+        ipcRenderer.invoke('get-gpus'),
+        ipcRenderer.invoke('get-cpus')
+      ]);
 
-      setGPUs(data);
+      setGPUs(gpuData);
+      setCpus(cpuData);
       setError(null);
 
-      // Update history - keep last 30 values
-      setTempHistory(prev => {
+      setGpuHistory(prev => {
         const newHistory: GPUHistory = { ...prev };
-        data.forEach(gpu => {
-          if (!newHistory[gpu.id]) {
-            newHistory[gpu.id] = [];
-          }
+        gpuData.forEach(gpu => {
+          if (!newHistory[gpu.id]) newHistory[gpu.id] = [];
           const history = [...newHistory[gpu.id], gpu.temp];
           if (history.length > 30) history.shift();
           newHistory[gpu.id] = history;
@@ -49,9 +53,20 @@ function App() {
         return newHistory;
       });
 
+      setCpuHistory(prev => {
+        const newHistory: CPUHistory = { ...prev };
+        cpuData.forEach(cpu => {
+          if (!newHistory[cpu.id]) newHistory[cpu.id] = [];
+          const history = [...newHistory[cpu.id], cpu.utilization];
+          if (history.length > 30) history.shift();
+          newHistory[cpu.id] = history;
+        });
+        return newHistory;
+      });
+
       setLoading(false);
     } catch (error) {
-      console.error('Failed to load GPUs:', error);
+      console.error('Failed to load data:', error);
       setError(error instanceof Error ? error.message : 'Unknown error');
       setLoading(false);
     }
@@ -70,7 +85,7 @@ function App() {
   }
 
   // Show error state
-  if (error && gpus.length === 0) {
+  if (error && gpus.length === 0 && cpus.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-black">
         <div className="text-center space-y-4">
@@ -92,7 +107,7 @@ function App() {
   for (let i = 0; i < gpus.length; i++) {
     const gpu = gpus[i];
     gpuCards.push(
-      <GPUCard key={gpu.id} gpu={gpu} tempHistory={tempHistory[gpu.id] || []} />
+      <GPUCard key={gpu.id} gpu={gpu} tempHistory={gpuHistory[gpu.id] || []} />
     );
   }
 
@@ -106,7 +121,7 @@ function App() {
 
         <h1 className="relative text-4xl md:text-6xl font-extrabold tracking-tight mb-2">
           <span className="bg-gradient-to-r from-cyan-400 via-blue-500 to-fuchsia-500 bg-clip-text text-transparent animate-pulse-glow">
-            GPU MONITOR
+            SYSTEM MONITOR
           </span>
         </h1>
 
@@ -115,32 +130,50 @@ function App() {
             <p className="text-cyan-300 animate-pulse">Connecting to server...</p>
           ) : (
             <p className="text-gray-300">
-              Monitoring <span className="font-bold text-white">{gpus.length}</span> GPU(s)
-              {gpus.length > 0 && ` - Last updated ${new Date().toLocaleTimeString()}`}
+              Monitoring <span className="font-bold text-white">{cpus.length}</span> CPU(s) + <span className="font-bold text-white">{gpus.length}</span> GPU(s)
+              {` • Last updated ${new Date().toLocaleTimeString()}`}
             </p>
           )}
         </div>
       </header>
 
-      {/* GPU Grid */}
-      {gpus.length === 0 ? (
+      {/* CPU + GPU Grid */}
+      {gpus.length === 0 && cpus.length === 0 ? (
         <div className="text-center py-16 px-4">
           <div className="inline-block p-6 rounded-full bg-red-500/10 border border-red-500/20 mb-4">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
               <path d="M12 2v4m0 14v4m-9-9h18M4 7h16a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" />
             </svg>
           </div>
-          <p className="text-xl text-gray-400">No GPUs detected</p>
+          <p className="text-xl text-gray-400">No hardware detected</p>
           <p className="text-sm text-gray-500 mt-2">Make sure nvidia-smi is installed and running</p>
         </div>
       ) : (
         <div className="px-6 max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {gpuCards}
-          </div>
+          {/* CPU Cards */}
+          {cpus.length > 0 && (
+            <>
+              <h2 className="text-lg font-semibold text-gray-300 mb-4">CPU</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-8">
+                {cpus.map((cpu) => (
+                  <CPUCard key={cpu.id} cpu={cpu} tempHistory={cpuHistory[cpu.id] || []} />
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* GPU Cards */}
+          {gpus.length > 0 && (
+            <>
+              <h2 className="text-lg font-semibold text-gray-300 mb-4">GPU</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-8">
+                {gpuCards}
+              </div>
+            </>
+          )}
 
           {/* Summary Section */}
-          <SummaryCard gpus={gpus} />
+          <SummaryCard gpus={gpus} cpus={cpus} />
 
           {/* Footer */}
           <footer className="mt-12 text-center text-sm text-gray-500">

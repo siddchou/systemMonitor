@@ -14,6 +14,21 @@ export interface GPUHistory {
   [key: number]: number[];
 }
 
+export interface CPUData {
+  id: number;
+  name: string;
+  cores: number;
+  logicalProcessors: number;
+  utilization: number;
+  clockSpeed: number;
+  memoryUsed: number;
+  memoryTotal: number;
+}
+
+export interface CPUHistory {
+  [key: number]: number[];
+}
+
 // Chart.js types
 interface ChartDataset {
   label?: string;
