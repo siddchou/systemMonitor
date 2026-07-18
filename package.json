@@ -1,0 +1,52 @@
+{
+  "name": "gpu-monitor",
+  "version": "1.0.0",
+  "description": "GPU Temperature Monitor",
+  "main": "./dist/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "server": "node server.js",
+    "build": "tsc --project tsconfig.electron.json && vite build",
+    "preview": "vite preview",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:dev:all": "concurrently \"npm run dev\" \"npm run server\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:build": "tsc --project tsconfig.electron.json && vite build && electron-builder"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.17",
+    "concurrently": "^8.2.2",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.1.0",
+    "wait-on": "^7.2.0"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.1",
+    "react": "^18.2.0",
+    "react-chartjs-2": "^5.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "build": {
+    "appId": "com.gpumonitor.app",
+    "productName": "GPU Monitor",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "server.js"
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": "public/icon.png"
+    }
+  }
+}
