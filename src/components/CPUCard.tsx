@@ -7,6 +7,7 @@ interface CPUCardProps {
 }
 
 const CPUCard = ({ cpu, tempHistory }: CPUCardProps) => {
+  // Memoize computed values
   const utilPct = Math.min(cpu.utilization, 100);
   const memPct = Math.min((cpu.memoryUsed / cpu.memoryTotal) * 100, 100);
 

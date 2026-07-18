@@ -1,5 +1,5 @@
 import http from 'http';
-import { execSync, spawn } from 'child_process';
+import { exec } from 'child_process';
 
 // Subsystem ID to manufacturer lookup (last 4 chars of SUBSYS)
 const MANUFACTURERS = {
@@ -20,6 +20,11 @@ const MANUFACTURERS = {
     '1D05': 'XFX'
 };
 
+const GPU_DATA_CACHE = { data: [], timestamp: 0 };
+const CPU_DATA_CACHE = { data: [], timestamp: 0 };
+
+const CACHE_TTL = 500; // 500ms cache TTL
+
 function getManufacturer(subsysId) {
     let id = subsysId;
     if (id.startsWith('0x')) {
@@ -29,69 +34,143 @@ function getManufacturer(subsysId) {
     return MANUFACTURERS[vendor] || 'Unknown';
 }
 
-// Get CPU data
-function getCPUs() {
-    try {
-        const cpuInfo = execSync(
-            'powershell -Command "Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors,LoadPercentage,CurrentClockSpeed | Format-List"',
-            { encoding: 'utf8' }
-        );
-        const memInfo = execSync(
-            'powershell -Command "Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory | Format-List"',
-            { encoding: 'utf8' }
-        );
+// Async exec with timeout
+function execAsync(command, timeout = 5000) {
+    return new Promise((resolve, reject) => {
+        const parts = command.split(' ');
+        const cmd = parts[0];
+        const args = parts.slice(1);
 
-        function parseProp(name, text) {
-            const match = text.match(new RegExp(`${name}\\s*:\\s*(.+)$`, 'm'));
-            return match ? match[1].trim() : '0';
-        }
+        let timeoutId;
+        let killed = false;
 
-        const totalMemMB = parseFloat(parseProp('TotalVisibleMemorySize', memInfo)) / 1024;
-        const freeMemMB = parseFloat(parseProp('FreePhysicalMemory', memInfo)) / 1024;
+        const process = require('child_process').spawn(cmd, args, {
+            shell: true,
+            encoding: 'utf8'
+        });
 
-        return [{
-            id: 0,
-            name: parseProp('Name', cpuInfo),
-            cores: parseInt(parseProp('NumberOfCores', cpuInfo)) || 0,
-            logicalProcessors: parseInt(parseProp('NumberOfLogicalProcessors', cpuInfo)) || 0,
-            utilization: parseFloat(parseProp('LoadPercentage', cpuInfo)) || 0,
-            clockSpeed: parseFloat(parseProp('CurrentClockSpeed', cpuInfo)) || 0,
-            memoryUsed: totalMemMB - freeMemMB,
-            memoryTotal: totalMemMB
-        }];
-    } catch (error) {
-        console.error('Error fetching CPUs:', error.message);
-        return [];
-    }
+        let output = '';
+        let errorOutput = '';
+
+        timeoutId = setTimeout(() => {
+            killed = true;
+            process.kill('SIGTERM');
+            reject(new Error(`Command timed out after ${timeout}ms`));
+        }, timeout);
+
+        process.stdout.on('data', (data) => { output += data; });
+        process.stderr.on('data', (data) => { errorOutput += data; });
+
+        process.on('close', (code) => {
+            if (timeoutId) clearTimeout(timeoutId);
+            if (killed) return;
+            if (code === 0) resolve(output);
+            else reject(new Error(`Command failed with code ${code}`));
+        });
+
+        process.on('error', (err) => {
+            if (timeoutId) clearTimeout(timeoutId);
+            reject(err);
+        });
+    });
 }
 
-// Get GPU data
-function getGPUs() {
-    try {
-        const output = execSync(
-            'nvidia-smi --query-gpu=name,temperature.gpu,power.draw,power.limit,utilization.gpu,memory.used,memory.total,gpu_bus_id,pci.sub_device_id --format=csv,noheader',
-            { encoding: 'utf8' }
-        );
-        return output.trim().split('\n').map((line, i) => {
-            const parts = line.split(',').map(p => p.trim());
-            const subDeviceId = parts[8]?.trim() || '';
-            const manufacturer = getManufacturer(subDeviceId);
-            return {
-                id: i,
-                name: parts[0] || `GPU ${i}`,
-                manufacturer,
-                temp: parseFloat(parts[1]) || 0,
-                powerDraw: parseFloat(parts[2]?.replace('W', '')) || 0,
-                powerLimit: parseFloat(parts[3]?.replace('W', '')) || 0,
-                utilization: parseFloat(parts[4]?.replace('%', '')) || 0,
-                memoryUsed: parseFloat(parts[5]?.replace('MiB', '')) || 0,
-                memoryTotal: parseFloat(parts[6]?.replace('MiB', '')) || 0
-            };
+function getCPUs() {
+    return new Promise((resolve) => {
+        const now = Date.now();
+
+        if (CPU_DATA_CACHE.data.length > 0 && (now - CPU_DATA_CACHE.timestamp) < CACHE_TTL) {
+            resolve(JSON.parse(JSON.stringify(CPU_DATA_CACHE.data)));
+            return;
+        }
+
+        const cpuCmd = 'powershell -Command "Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors,LoadPercentage,CurrentClockSpeed | Format-List"';
+        const memCmd = 'powershell -Command "Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory | Format-List"';
+
+        Promise.all([execAsync(cpuCmd), execAsync(memCmd)]).then(([cpuInfo, memInfo]) => {
+            function parseProp(name, text) {
+                const match = text.match(new RegExp(`${name}\\s*:\\s*(.+)$`, 'm'));
+                return match ? match[1].trim() : '0';
+            }
+
+            const totalMemMB = parseFloat(parseProp('TotalVisibleMemorySize', memInfo)) / 1024;
+            const freeMemMB = parseFloat(parseProp('FreePhysicalMemory', memInfo)) / 1024;
+
+            const result = [{
+                id: 0,
+                name: parseProp('Name', cpuInfo),
+                cores: parseInt(parseProp('NumberOfCores', cpuInfo)) || 0,
+                logicalProcessors: parseInt(parseProp('NumberOfLogicalProcessors', cpuInfo)) || 0,
+                utilization: parseFloat(parseProp('LoadPercentage', cpuInfo)) || 0,
+                clockSpeed: parseFloat(parseProp('CurrentClockSpeed', cpuInfo)) || 0,
+                memoryUsed: totalMemMB - freeMemMB,
+                memoryTotal: totalMemMB
+            }];
+
+            CPU_DATA_CACHE.data = result;
+            CPU_DATA_CACHE.timestamp = now;
+            resolve(JSON.parse(JSON.stringify(result)));
+        }).catch((error) => {
+            console.error('Error fetching CPUs:', error);
+            if (CPU_DATA_CACHE.data.length > 0) resolve(JSON.parse(JSON.stringify(CPU_DATA_CACHE.data)));
+            else resolve([]);
         });
-    } catch (error) {
-        console.error('Error:', error.message);
-        return [];
-    }
+    });
+}
+
+function getGPUs() {
+    return new Promise((resolve) => {
+        const now = Date.now();
+
+        if (GPU_DATA_CACHE.data.length > 0 && (now - GPU_DATA_CACHE.timestamp) < CACHE_TTL) {
+            resolve(JSON.parse(JSON.stringify(GPU_DATA_CACHE.data)));
+            return;
+        }
+
+        const gpuCmd = 'nvidia-smi --query-gpu=name,temperature.gpu,power.draw,power.limit,utilization.gpu,memory.used,memory.total,gpu_bus_id,pci.sub_device_id --format=csv,noheader';
+
+        execAsync(gpuCmd).then((output) => {
+            try {
+                const lines = output.trim().split('\n');
+                const gpus = lines.map((line, i) => {
+                    const parts = line.split(',').map(p => p.trim());
+                    const subDeviceId = parts[8]?.trim() || '';
+                    const manufacturer = getManufacturer(subDeviceId);
+
+                    return {
+                        id: i,
+                        name: parts[0] || `GPU ${i}`,
+                        manufacturer,
+                        temp: parseFloat(parts[1]) || 0,
+                        powerDraw: parseFloat(parts[2]?.replace('W', '')) || 0,
+                        powerLimit: parseFloat(parts[3]?.replace('W', '')) || 0,
+                        utilization: parseFloat(parts[4]?.replace('%', '')) || 0,
+                        memoryUsed: parseFloat(parts[5]?.replace('MiB', '')) || 0,
+                        memoryTotal: parseFloat(parts[6]?.replace('MiB', '')) || 0
+                    };
+                });
+
+                GPU_DATA_CACHE.data = gpus;
+                GPU_DATA_CACHE.timestamp = now;
+                resolve(JSON.parse(JSON.stringify(gpus)));
+            } catch (error) {
+                console.error('Error parsing GPU data:', error);
+                if (GPU_DATA_CACHE.data.length > 0) resolve(JSON.parse(JSON.stringify(GPU_DATA_CACHE.data)));
+                else resolve([]);
+            }
+        }).catch((error) => {
+            console.error('Error fetching GPUs:', error);
+            if (GPU_DATA_CACHE.data.length > 0) resolve(JSON.parse(JSON.stringify(GPU_DATA_CACHE.data)));
+            else resolve([]);
+        });
+    });
+}
+
+function clearDataCache() {
+    GPU_DATA_CACHE.data = [];
+    GPU_DATA_CACHE.timestamp = 0;
+    CPU_DATA_CACHE.data = [];
+    CPU_DATA_CACHE.timestamp = 0;
 }
 
 const html = `
@@ -137,6 +216,7 @@ h1{background:linear-gradient(45deg,#00f2fe,#4facfe);-webkit-background-clip:tex
 <script>
 let gpus = [];
 const tempHistory = {};
+let chartInstances = {};
 
 setInterval(async () => {
     try {
@@ -154,7 +234,37 @@ setInterval(async () => {
     } catch(e) { console.error(e); }
 }, 1000);
 
-// Initialize cards once
+// Initialize charts once
+function createCharts() {
+    for (let i = 0; i < gpus.length; i++) {
+        const canvas = document.getElementById('chart-' + i);
+        if (canvas && !chartInstances[i]) {
+            chartInstances[i] = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: { labels: [], datasets: [{ label: 'Temp', data: [], borderColor: '#ff6b6b', backgroundColor: '#ff6b6b20', borderWidth: 2, tension: 0.4, fill: true, pointRadius: 0 }] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 200 },
+                    plugins: { legend: { display: false } },
+                    scales: { x: { display: false }, y: { min: 0, max: 100, display: true, grid: { color: 'rgba(255,255,255,0.1)' } } }
+                }
+            });
+        }
+    }
+}
+
+// Update chart data efficiently
+function updateCharts() {
+    for (let i = 0; i < gpus.length; i++) {
+        if (chartInstances[i]) {
+            chartInstances[i].data.labels = tempHistory[gpu.id] ? tempHistory[gpu.id].map((_, idx) => idx) : [];
+            chartInstances[i].data.datasets[0].data = tempHistory[gpu.id] || [];
+            chartInstances[i].update('none');
+        }
+    }
+}
+
 function initCards() {
     const container = document.getElementById('gpuContainer');
     if (container.children.length === 0 && gpus.length > 0) {
@@ -170,25 +280,6 @@ function initCards() {
         }
         container.innerHTML = html;
         createCharts();
-    }
-}
-
-function createCharts() {
-    for (let i = 0; i < gpus.length; i++) {
-        const canvas = document.getElementById('chart-' + i);
-        if (canvas) {
-            new Chart(canvas.getContext('2d'), {
-                type: 'line',
-                data: { labels: [], datasets: [{ label: 'Temp', data: [], borderColor: '#ff6b6b', backgroundColor: '#ff6b6b20', borderWidth: 2, tension: 0.4, fill: true, pointRadius: 0 }] },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    animation: false,
-                    plugins: { legend: { display: false } },
-                    scales: { x: { display: false }, y: { min: 0, max: 100, display: true, grid: { color: 'rgba(255,255,255,0.1)' } } }
-                }
-            });
-        }
     }
 }
 
@@ -217,11 +308,10 @@ function updateUI() {
         const powerBar = document.querySelector('#gpuContainer .card:nth-child(' + (gpu.id + 1) + ') .power .fill');
         if (powerBar) powerBar.style.width = powerPct + '%';
 
-        // Update chart data
-        const canvas = document.getElementById('chart-' + gpu.id);
-        if (canvas && canvas.chartInstance) {
-            canvas.chartInstance.data.datasets[0].data = tempHistory[gpu.id];
-            canvas.chartInstance.update();
+        // Update chart data efficiently
+        if (chartInstances[gpu.id]) {
+            chartInstances[gpu.id].data.datasets[0].data = tempHistory[gpu.id];
+            chartInstances[gpu.id].update('none');
         }
     });
 
@@ -238,13 +328,34 @@ updateUI();
 </script>
 </body></html>`;
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
     if (req.url === '/api/gpus') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(getGPUs()));
+        try {
+            const gpusData = await getGPUs();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(gpusData));
+        } catch (error) {
+            console.error('Error:', error.message);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Failed to fetch GPU data' }));
+        }
     } else if (req.url === '/api/cpus') {
+        try {
+            const cpusData = await getCPUs();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(cpusData));
+        } catch (error) {
+            console.error('Error:', error.message);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Failed to fetch CPU data' }));
+        }
+    } else if (req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('OK');
+    } else if (req.url === '/cache/clear') {
+        clearDataCache();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(getCPUs()));
+        res.end(JSON.stringify({ success: true }));
     } else {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(html);
@@ -254,5 +365,5 @@ const server = http.createServer((req, res) => {
 const PORT = 8080;
 server.listen(PORT, () => {
     console.log('GPU Monitor on port ' + PORT);
-    setTimeout(() => spawn('explorer', ['http://localhost:' + PORT]), 500);
+    setTimeout(() => require('child_process').spawn('explorer', ['http://localhost:' + PORT]), 500);
 });

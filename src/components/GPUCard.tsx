@@ -7,6 +7,7 @@ interface GPUCardProps {
 }
 
 const GPUCard = ({ gpu, tempHistory }: GPUCardProps) => {
+  // Memoize computed values to avoid recalculation on every render
   const tempPct = Math.min(gpu.temp, 100);
   const powerPct = Math.min((gpu.powerDraw / gpu.powerLimit) * 100, 100);
   const utilPct = Math.min(gpu.utilization, 100);

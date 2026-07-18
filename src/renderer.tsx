@@ -20,14 +20,14 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Initial load
+    // Load data initially
     loadData();
 
-    // Start polling for updates every second
-    const intervalId = window.setInterval(loadData, 1000);
+    // Poll every second
+    const intervalId = setInterval(loadData, 1000);
 
     return () => {
-      window.clearInterval(intervalId);
+      clearInterval(intervalId);
     };
   }, []);
 
@@ -42,13 +42,17 @@ function App() {
       setCpus(cpuData);
       setError(null);
 
+      // Update history with new data
       setGpuHistory(prev => {
         const newHistory: GPUHistory = { ...prev };
         gpuData.forEach(gpu => {
-          if (!newHistory[gpu.id]) newHistory[gpu.id] = [];
-          const history = [...newHistory[gpu.id], gpu.temp];
-          if (history.length > 30) history.shift();
-          newHistory[gpu.id] = history;
+          if (!newHistory[gpu.id]) {
+            newHistory[gpu.id] = [gpu.temp];
+          } else {
+            const history = newHistory[gpu.id];
+            history.push(gpu.temp);
+            if (history.length > 30) history.shift();
+          }
         });
         return newHistory;
       });
@@ -56,10 +60,13 @@ function App() {
       setCpuHistory(prev => {
         const newHistory: CPUHistory = { ...prev };
         cpuData.forEach(cpu => {
-          if (!newHistory[cpu.id]) newHistory[cpu.id] = [];
-          const history = [...newHistory[cpu.id], cpu.utilization];
-          if (history.length > 30) history.shift();
-          newHistory[cpu.id] = history;
+          if (!newHistory[cpu.id]) {
+            newHistory[cpu.id] = [cpu.utilization];
+          } else {
+            const history = newHistory[cpu.id];
+            history.push(cpu.utilization);
+            if (history.length > 30) history.shift();
+          }
         });
         return newHistory;
       });
@@ -68,12 +75,12 @@ function App() {
     } catch (error) {
       console.error('Failed to load data:', error);
       setError(error instanceof Error ? error.message : 'Unknown error');
-      setLoading(false);
+      // Don't stop loading on error so app keeps trying
     }
   }
 
   // Show loading spinner
-  if (loading) {
+  if (loading && gpus.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-black">
         <div className="text-center space-y-4">
@@ -84,7 +91,7 @@ function App() {
     );
   }
 
-  // Show error state
+  // Show error state only if no data at all
   if (error && gpus.length === 0 && cpus.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-black">
@@ -95,21 +102,17 @@ function App() {
             </svg>
           </div>
           <p className="text-xl text-red-400">Error loading GPU data</p>
-          <p className="text-sm text-gray-500 mt-2 max-w-md">{error}</p>
+              <p className="text-sm text-gray-500 mt-2 max-w-md">{error}</p>
           <p className="text-xs text-gray-600 mt-4">Check the console for more details</p>
         </div>
       </div>
     );
   }
 
-  // Render GPUCard elements manually to avoid key prop issues
-  const gpuCards = [];
-  for (let i = 0; i < gpus.length; i++) {
-    const gpu = gpus[i];
-    gpuCards.push(
-      <GPUCard key={gpu.id} gpu={gpu} tempHistory={gpuHistory[gpu.id] || []} />
-    );
-  }
+  // Render GPUCard elements
+  const gpuCards = gpus.map((gpu) => (
+    <GPUCard key={gpu.id} gpu={gpu} tempHistory={gpuHistory[gpu.id] || []} />
+  ));
 
   return (
     <div className="min-h-screen pb-8">

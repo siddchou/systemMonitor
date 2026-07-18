@@ -8,12 +8,22 @@ interface SummaryCardProps {
 const SummaryCard = ({ gpus, cpus }: SummaryCardProps) => {
   if (gpus.length === 0 && cpus.length === 0) return null;
 
-  const totalGpuTemp = gpus.reduce((sum, gpu) => sum + gpu.temp, 0);
-  const maxGpuTemp = gpus.length > 0 ? Math.max(...gpus.map(gpu => gpu.temp)) : 0;
-  const totalPower = gpus.reduce((sum, gpu) => sum + gpu.powerDraw, 0);
-  const avgCpuUtil = cpus.length > 0 ? cpus.reduce((sum, cpu) => sum + cpu.utilization, 0) / cpus.length : 0;
-  const totalMemoryUsed = cpus.reduce((sum, cpu) => sum + cpu.memoryUsed, 0);
-  const totalMemory = cpus.reduce((sum, cpu) => sum + cpu.memoryTotal, 0);
+  // Optimize: Calculate all values in a single pass
+  const gpuStats = gpus.length > 0 ? gpus.reduce((acc, gpu) => ({
+    totalTemp: acc.totalTemp + gpu.temp,
+    maxTemp: Math.max(acc.maxTemp, gpu.temp),
+    totalPower: acc.totalPower + gpu.powerDraw
+  }), { totalTemp: 0, maxTemp: 0, totalPower: 0 }) : null;
+
+  const cpuStats = cpus.length > 0 ? cpus.reduce((acc, cpu) => ({
+    totalUtil: acc.totalUtil + cpu.utilization,
+    totalMemoryUsed: acc.totalMemoryUsed + cpu.memoryUsed,
+    totalMemory: acc.totalMemory + cpu.memoryTotal
+  }), { totalUtil: 0, totalMemoryUsed: 0, totalMemory: 0 }) : null;
+
+  const avgCpuUtil = cpuStats ? cpuStats.totalUtil / cpus.length : 0;
+  const maxGpuTemp = gpuStats ? gpuStats.maxTemp : 0;
+  const totalPower = gpuStats ? gpuStats.totalPower : 0;
 
   return (
     <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -33,7 +43,7 @@ const SummaryCard = ({ gpus, cpus }: SummaryCardProps) => {
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-white/5 to-transparent animate-pulse" />
         <p className="text-sm text-gray-400 uppercase tracking-wider mb-2">Memory</p>
         <p className="text-3xl font-bold text-white">
-          {(totalMemoryUsed / 1024).toFixed(1)} / {(totalMemory / 1024).toFixed(1)}
+          {(cpuStats ? cpuStats.totalMemoryUsed / 1024 : 0).toFixed(1)} / {(cpuStats ? cpuStats.totalMemory / 1024 : 0).toFixed(1)}
         </p>
         <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20">
           <MemoryIcon />
