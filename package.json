@@ -45,8 +45,7 @@
       "server.js"
     ],
     "win": {
-      "target": ["nsis"],
-      "icon": "public/icon.png"
+      "target": ["nsis"]
     }
   }
 }
