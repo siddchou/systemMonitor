@@ -1,5 +1,6 @@
 import { GPUData, GPUHistory } from '../types/gpu';
 import GPUChart from './GPUChart';
+import { getTempStyles } from '../utils/tempThresholds';
 
 interface GPUCardProps {
   gpu: GPUData;
@@ -9,6 +10,7 @@ interface GPUCardProps {
 const GPUCard = ({ gpu, tempHistory }: GPUCardProps) => {
   // Memoize computed values to avoid recalculation on every render
   const tempPct = Math.min(gpu.temp, 100);
+  const tempStyles = getTempStyles(gpu.temp);
   const powerPct = Math.min((gpu.powerDraw / gpu.powerLimit) * 100, 100);
   const utilPct = Math.min(gpu.utilization, 100);
   const memPct = Math.min((gpu.memoryUsed / gpu.memoryTotal) * 100, 100);
@@ -29,7 +31,7 @@ const GPUCard = ({ gpu, tempHistory }: GPUCardProps) => {
               {gpu.manufacturer} NVIDIA
             </p>
           </div>
-          <div className="px-3 py-1 rounded-full bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-semibold">
+          <div className={`px-3 py-1 rounded-full border ${tempStyles.badgeClass} text-xs font-semibold`}>
             {gpu.temp.toFixed(0)}°C
           </div>
         </div>
@@ -44,7 +46,7 @@ const GPUCard = ({ gpu, tempHistory }: GPUCardProps) => {
             </div>
             <div className="h-2 bg-white/5 rounded-full overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-red-500 via-orange-500 to-red-500 transition-all duration-300"
+                className={`h-full bg-gradient-to-r ${tempStyles.barGradientClass} transition-all duration-300`}
                 style={{ width: `${tempPct}%` }}
               />
             </div>
@@ -103,7 +105,7 @@ const GPUCard = ({ gpu, tempHistory }: GPUCardProps) => {
 
         {/* Chart */}
         <div className="relative h-24 w-full rounded-xl bg-gradient-to-b from-white/5 to-transparent border border-white/5 p-3">
-          <GPUChart data={tempHistory} color="#ff6b6b" />
+          <GPUChart data={tempHistory} color={tempStyles.chartColor} />
           <div className="absolute top-2 right-3 text-xs text-gray-500 font-mono">
             Last 30s
           </div>

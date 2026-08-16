@@ -1,4 +1,5 @@
 import { GPUData, CPUData } from '../types/gpu';
+import { getTempStyles } from '../utils/tempThresholds';
 
 interface SummaryCardProps {
   gpus: GPUData[];
@@ -55,7 +56,7 @@ const SummaryCard = ({ gpus, cpus }: SummaryCardProps) => {
         <>
           <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-500/10 to-orange-500/10 border border-red-500/20 p-6 text-center backdrop-blur-sm">
             <p className="text-sm text-gray-400 uppercase tracking-wider mb-2">Max GPU Temp</p>
-            <p className={`text-3xl font-bold ${maxGpuTemp > 80 ? 'text-red-500' : maxGpuTemp > 60 ? 'text-orange-400' : 'text-white'}`}>
+            <p className={`text-3xl font-bold ${getTempStyles(maxGpuTemp).textClass}`}>
               {maxGpuTemp.toFixed(1)}°C
             </p>
             <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20">

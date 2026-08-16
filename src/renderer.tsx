@@ -46,13 +46,8 @@ function App() {
       setGpuHistory(prev => {
         const newHistory: GPUHistory = { ...prev };
         gpuData.forEach(gpu => {
-          if (!newHistory[gpu.id]) {
-            newHistory[gpu.id] = [gpu.temp];
-          } else {
-            const history = newHistory[gpu.id];
-            history.push(gpu.temp);
-            if (history.length > 30) history.shift();
-          }
+          const next = [...(newHistory[gpu.id] || []), gpu.temp];
+          newHistory[gpu.id] = next.length > 30 ? next.slice(-30) : next;
         });
         return newHistory;
       });
@@ -60,13 +55,8 @@ function App() {
       setCpuHistory(prev => {
         const newHistory: CPUHistory = { ...prev };
         cpuData.forEach(cpu => {
-          if (!newHistory[cpu.id]) {
-            newHistory[cpu.id] = [cpu.utilization];
-          } else {
-            const history = newHistory[cpu.id];
-            history.push(cpu.utilization);
-            if (history.length > 30) history.shift();
-          }
+          const next = [...(newHistory[cpu.id] || []), cpu.utilization];
+          newHistory[cpu.id] = next.length > 30 ? next.slice(-30) : next;
         });
         return newHistory;
       });
