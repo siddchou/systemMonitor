@@ -1,9 +1,8 @@
-// @ts-nocheck
-
+// Sandboxed preloads always load as CommonJS, even with "type": "module" in package.json.
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Expose protected methods that allow the renderer process to use
-// the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('gpuMonitor', {
   getGPUs: () => ipcRenderer.invoke('get-gpus'),
+  getCPUs: () => ipcRenderer.invoke('get-cpus'),
+  clearDataCache: () => ipcRenderer.invoke('clear-data-cache'),
 });

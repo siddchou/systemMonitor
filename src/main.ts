@@ -183,8 +183,9 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#0f0c29',
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
     },
     show: false,
   });

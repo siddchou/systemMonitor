@@ -38,3 +38,21 @@ Ran the real dev flow (`vite` + `electron .`, ~15s, auto-killed) with `ELECTRON_
 - Visual color confirmation is left to a manual `npm run electron:dev` run (no screenshot access to the Electron window from here).
 
 Committed scope-relevant files only: `src/utils/tempThresholds.ts`, `src/components/GPUCard.tsx`, `src/components/SummaryCard.tsx`, `src/components/GPUChart.tsx`, `src/renderer.tsx`, this file.
+
+## 2026-08-15 — Phase 2 security fix: context isolation + preload bridge, committed
+
+**Scope:** wire up the orphaned `src/preload.ts` and switch to `contextIsolation: true` / `nodeIntegration: false`.
+
+**Changes:**
+- **`src/preload.ts`** — rewritten as a sandboxed-preload CommonJS bridge exposing `getGPUs`, `getCPUs`, `clearDataCache` (all three channels main.ts registers) via `contextBridge.exposeInMainWorld('gpuMonitor', ...)`. Key gotcha: first attempt used ESM `import` because package.json has `"type": "module"` — smoke test failed with `SyntaxError: Cannot use import statement outside a module` from Electron's `sandbox_bundle`. Sandboxed preloads are **always loaded as CommonJS** regardless of the package type field, so it must stay `require('electron')`.
+- **`src/main.ts`** — `webPreferences` now sets `preload: path.join(__dirname, 'preload.js')`, `contextIsolation: true`, `nodeIntegration: false`.
+- **`src/renderer.tsx`** — removed `window.require('electron')` + direct `ipcRenderer.invoke`; data loading now goes through `window.gpuMonitor.getGPUs()` / `getCPUs()`.
+- **`src/types/electron.d.ts`** — rewritten (old file was broken: referenced unimported `CPUData`, malformed top-level `NodeJS.ProcessEnv` in a module file). Now declares `Window.gpuMonitor` with the three methods typed against `GPUData`/`CPUData`.
+- `@ts-nocheck` kept on renderer.tsx line 1: removing it surfaces two pre-existing TS2322 errors (GPUCard/CPUCard `key` prop) unrelated to this change — left as pre-existing per scope.
+- No build-script changes needed: `tsconfig.electron.json` already compiles `src/preload.ts` → `dist/preload.js`.
+
+**Verification:** `npm run build` (tsc + vite) green. Bounded `electron:dev` smoke test (~20s, `ELECTRON_ENABLE_LOGGING=1`): preload loads cleanly (no "Unable to load preload script"), zero renderer errors across ~20 one-second polls, and `nvidia-smi.exe` observed spawning during the run — live GPU/CPU data flowing through the new bridge. Only pre-existing dev-only CSP warning in the log.
+
+**Environment note:** port 5173 was occupied by orphaned vite/electron processes from a prior session's smoke test (confirmed via process command lines before killing). Also learned `taskkill //T` on the npm `$!` PID can leave vite/esbuild behind — verify with netstat/tasklist after kill and clean up stragglers.
+
+Committed scope-relevant files only: `src/preload.ts`, `src/main.ts`, `src/renderer.tsx`, `src/types/electron.d.ts`, this file.

@@ -1,4 +1,4 @@
-// @ts-nocheck
+// @ts-nocheck — pre-existing GPUCard/CPUCard JSX props typing errors (key prop)
 
 import { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -7,9 +7,6 @@ import CPUCard from './components/CPUCard';
 import SummaryCard from './components/SummaryCard';
 import GPUChart from './components/GPUChart';
 import { GPUData, GPUHistory, CPUData, CPUHistory } from './types/gpu';
-
-// Get ipcRenderer from Electron
-const { ipcRenderer } = window.require('electron');
 
 function App() {
   const [gpus, setGPUs] = useState<GPUData[]>([]);
@@ -34,8 +31,8 @@ function App() {
   async function loadData() {
     try {
       const [gpuData, cpuData] = await Promise.all([
-        ipcRenderer.invoke('get-gpus'),
-        ipcRenderer.invoke('get-cpus')
+        window.gpuMonitor.getGPUs(),
+        window.gpuMonitor.getCPUs()
       ]);
 
       setGPUs(gpuData);

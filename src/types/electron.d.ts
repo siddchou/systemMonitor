@@ -1,19 +1,14 @@
-// Type declarations for Electron IPC
+// Type declarations for the Electron preload bridge (window.gpuMonitor)
 
-declare namespace NodeJS {
-  interface ProcessEnv {
-    readonly NODE_ENV: 'development' | 'production';
-    readonly ELECTRON_START_URL?: string;
-  }
-}
+import { GPUData, CPUData } from './gpu';
 
-import { GPUData } from './gpu';
-
-// IPC handlers
 declare global {
-  namespace ipcRenderer {
-    function invoke(channel: 'get-gpus'): Promise<GPUData[]>;
-    function invoke(channel: 'get-cpus'): Promise<CPUData[]>;
+  interface Window {
+    gpuMonitor: {
+      getGPUs(): Promise<GPUData[]>;
+      getCPUs(): Promise<CPUData[]>;
+      clearDataCache(): Promise<void>;
+    };
   }
 }
 
