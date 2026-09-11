@@ -2,6 +2,8 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import * as path from 'node:path';
 import * as url from 'node:url';
 import { spawn } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 
 const __filename = url.fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -103,7 +105,110 @@ function execAsync(command: string, timeout: number = 5000): Promise<string> {
   });
 }
 
+// --- Linux CPU/memory via /proc and /sys (no external tools needed) ---
+
+const IS_LINUX = process.platform === 'linux';
+
+// Previous /proc/stat sample, used to compute utilization as a delta between polls
+let lastCpuStat: { idle: number; total: number } | null = null;
+
+function readProcStat(): { idle: number; total: number } {
+  const line = fs.readFileSync('/proc/stat', 'utf8').split('\n')[0];
+  // "cpu user nice system idle iowait irq softirq steal guest guest_nice"
+  const fields = line.trim().split(/\s+/).slice(1).map(Number);
+  const idleAll = (fields[3] || 0) + (fields[4] || 0); // idle + iowait
+  const total = fields.reduce((a, b) => a + b, 0);
+  return { idle: idleAll, total };
+}
+
+function getCpuUtilization(): number {
+  try {
+    const cur = readProcStat();
+    let util = 0;
+    if (lastCpuStat && cur.total > lastCpuStat.total) {
+      const dTotal = cur.total - lastCpuStat.total;
+      const dIdle = cur.idle - lastCpuStat.idle;
+      util = Math.max(0, Math.min(100, ((dTotal - dIdle) / dTotal) * 100));
+    }
+    lastCpuStat = cur;
+    return util;
+  } catch {
+    return 0;
+  }
+}
+
+function getLinuxCpuInfo(): any {
+  const cpus = os.cpus();
+  const name: string = (cpus[0]?.model || 'Unknown CPU').replace(/\s+/g, ' ').trim();
+
+  // Physical cores = unique (physical id, core id) pairs in /proc/cpuinfo
+  let physicalCores = 0;
+  try {
+    const cpuinfo = fs.readFileSync('/proc/cpuinfo', 'utf8');
+    const coreSet = new Set<string>();
+    for (const block of cpuinfo.split(/\n\s*\n/)) {
+      const get = (key: string): string => {
+        const m = block.match(new RegExp(`^${key}\\s*:\\s*(.+)$`, 'm'));
+        return m ? m[1].trim() : '';
+      };
+      const coreId = get('core id');
+      if (coreId) coreSet.add(`${get('physical id') || '0'}:${coreId}`);
+    }
+    physicalCores = coreSet.size;
+  } catch {}
+
+  // Current clock: average of per-core scaling_cur_freq (kHz -> MHz), fallback to os.cpus() speed
+  let clockSum = 0, clockCount = 0;
+  try {
+    const cpuDir = '/sys/devices/system/cpu';
+    for (const entry of fs.readdirSync(cpuDir).filter((f) => /^cpu\d+$/.test(f))) {
+      try {
+        const freqKhz = parseInt(fs.readFileSync(`${cpuDir}/${entry}/cpufreq/scaling_cur_freq`, 'utf8'), 10);
+        if (!Number.isNaN(freqKhz)) { clockSum += freqKhz / 1000; clockCount++; }
+      } catch {}
+    }
+  } catch {}
+  const clockSpeed = clockCount > 0 ? Math.round(clockSum / clockCount) : (cpus[0]?.speed || 0);
+
+  // Memory from /proc/meminfo (values in kB); MemAvailable is a better "free" than MemFree
+  let memoryTotal = 0, memoryUsed = 0;
+  try {
+    const meminfo = fs.readFileSync('/proc/meminfo', 'utf8');
+    const getKB = (key: string): number => {
+      const m = meminfo.match(new RegExp(`^${key}:\\s+(\\d+)`, 'm'));
+      return m ? parseInt(m[1], 10) : 0;
+    };
+    const totalKB = getKB('MemTotal');
+    const availKB = getKB('MemAvailable') || getKB('MemFree');
+    memoryTotal = totalKB / 1024;
+    memoryUsed = (totalKB - availKB) / 1024;
+  } catch {}
+
+  return {
+    id: 0,
+    name,
+    cores: physicalCores || cpus.length,
+    logicalProcessors: cpus.length,
+    utilization: getCpuUtilization(),
+    clockSpeed,
+    memoryUsed,
+    memoryTotal
+  };
+}
+
 function getCPUs(): Promise<any[]> {
+  if (IS_LINUX) {
+    return new Promise((resolve) => {
+      try {
+        resolve([getLinuxCpuInfo()]);
+      } catch (error) {
+        console.error('Error fetching CPUs:', error);
+        resolve([]);
+      }
+    });
+  }
+
+  // Windows: PowerShell + WMI
   return new Promise((resolve) => {
     const cpuCmd = 'powershell -Command "Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors,LoadPercentage,CurrentClockSpeed | Format-List"';
     const memCmd = 'powershell -Command "Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory | Format-List"';

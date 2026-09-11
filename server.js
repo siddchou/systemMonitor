@@ -1,5 +1,7 @@
 import http from 'http';
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
+import os from 'os';
+import fs from 'fs';
 
 // Subsystem ID to manufacturer lookup (last 4 chars of SUBSYS)
 const MANUFACTURERS = {
@@ -44,7 +46,7 @@ function execAsync(command, timeout = 5000) {
         let timeoutId;
         let killed = false;
 
-        const process = require('child_process').spawn(cmd, args, {
+        const childProcess = spawn(cmd, args, {
             shell: true,
             encoding: 'utf8'
         });
@@ -54,25 +56,116 @@ function execAsync(command, timeout = 5000) {
 
         timeoutId = setTimeout(() => {
             killed = true;
-            process.kill('SIGTERM');
+            childProcess.kill('SIGTERM');
             reject(new Error(`Command timed out after ${timeout}ms`));
         }, timeout);
 
-        process.stdout.on('data', (data) => { output += data; });
-        process.stderr.on('data', (data) => { errorOutput += data; });
+        childProcess.stdout.on('data', (data) => { output += data; });
+        childProcess.stderr.on('data', (data) => { errorOutput += data; });
 
-        process.on('close', (code) => {
+        childProcess.on('close', (code) => {
             if (timeoutId) clearTimeout(timeoutId);
             if (killed) return;
             if (code === 0) resolve(output);
             else reject(new Error(`Command failed with code ${code}`));
         });
 
-        process.on('error', (err) => {
+        childProcess.on('error', (err) => {
             if (timeoutId) clearTimeout(timeoutId);
             reject(err);
         });
     });
+}
+
+// --- Linux CPU/memory via /proc and /sys (no external tools needed) ---
+
+const IS_LINUX = process.platform === 'linux';
+
+// Previous /proc/stat sample, used to compute utilization as a delta between polls
+let lastCpuStat = null;
+
+function readProcStat() {
+    const line = fs.readFileSync('/proc/stat', 'utf8').split('\n')[0];
+    // "cpu user nice system idle iowait irq softirq steal guest guest_nice"
+    const fields = line.trim().split(/\s+/).slice(1).map(Number);
+    const idleAll = (fields[3] || 0) + (fields[4] || 0); // idle + iowait
+    const total = fields.reduce((a, b) => a + b, 0);
+    return { idle: idleAll, total };
+}
+
+function getCpuUtilization() {
+    try {
+        const cur = readProcStat();
+        let util = 0;
+        if (lastCpuStat && cur.total > lastCpuStat.total) {
+            const dTotal = cur.total - lastCpuStat.total;
+            const dIdle = cur.idle - lastCpuStat.idle;
+            util = Math.max(0, Math.min(100, ((dTotal - dIdle) / dTotal) * 100));
+        }
+        lastCpuStat = cur;
+        return util;
+    } catch {
+        return 0;
+    }
+}
+
+function getLinuxCpuInfo() {
+    const cpus = os.cpus();
+    const name = (cpus[0]?.model || 'Unknown CPU').replace(/\s+/g, ' ').trim();
+
+    // Physical cores = unique (physical id, core id) pairs in /proc/cpuinfo
+    let physicalCores = 0;
+    try {
+        const cpuinfo = fs.readFileSync('/proc/cpuinfo', 'utf8');
+        const coreSet = new Set();
+        for (const block of cpuinfo.split(/\n\s*\n/)) {
+            const get = (key) => {
+                const m = block.match(new RegExp(`^${key}\\s*:\\s*(.+)$`, 'm'));
+                return m ? m[1].trim() : '';
+            };
+            const coreId = get('core id');
+            if (coreId) coreSet.add(`${get('physical id') || '0'}:${coreId}`);
+        }
+        physicalCores = coreSet.size;
+    } catch {}
+
+    // Current clock: average of per-core scaling_cur_freq (kHz -> MHz), fallback to os.cpus() speed
+    let clockSum = 0, clockCount = 0;
+    try {
+        const cpuDir = '/sys/devices/system/cpu';
+        for (const entry of fs.readdirSync(cpuDir).filter((f) => /^cpu\d+$/.test(f))) {
+            try {
+                const freqKhz = parseInt(fs.readFileSync(`${cpuDir}/${entry}/cpufreq/scaling_cur_freq`, 'utf8'), 10);
+                if (!Number.isNaN(freqKhz)) { clockSum += freqKhz / 1000; clockCount++; }
+            } catch {}
+        }
+    } catch {}
+    const clockSpeed = clockCount > 0 ? Math.round(clockSum / clockCount) : (cpus[0]?.speed || 0);
+
+    // Memory from /proc/meminfo (values in kB); MemAvailable is a better "free" than MemFree
+    let memoryTotal = 0, memoryUsed = 0;
+    try {
+        const meminfo = fs.readFileSync('/proc/meminfo', 'utf8');
+        const getKB = (key) => {
+            const m = meminfo.match(new RegExp(`^${key}:\\s+(\\d+)`, 'm'));
+            return m ? parseInt(m[1], 10) : 0;
+        };
+        const totalKB = getKB('MemTotal');
+        const availKB = getKB('MemAvailable') || getKB('MemFree');
+        memoryTotal = totalKB / 1024;
+        memoryUsed = (totalKB - availKB) / 1024;
+    } catch {}
+
+    return {
+        id: 0,
+        name,
+        cores: physicalCores || cpus.length,
+        logicalProcessors: cpus.length,
+        utilization: getCpuUtilization(),
+        clockSpeed,
+        memoryUsed,
+        memoryTotal
+    };
 }
 
 function getCPUs() {
@@ -81,6 +174,20 @@ function getCPUs() {
 
         if (CPU_DATA_CACHE.data.length > 0 && (now - CPU_DATA_CACHE.timestamp) < CACHE_TTL) {
             resolve(JSON.parse(JSON.stringify(CPU_DATA_CACHE.data)));
+            return;
+        }
+
+        if (IS_LINUX) {
+            try {
+                const result = [getLinuxCpuInfo()];
+                CPU_DATA_CACHE.data = result;
+                CPU_DATA_CACHE.timestamp = now;
+                resolve(JSON.parse(JSON.stringify(result)));
+            } catch (error) {
+                console.error('Error fetching CPUs:', error);
+                if (CPU_DATA_CACHE.data.length > 0) resolve(JSON.parse(JSON.stringify(CPU_DATA_CACHE.data)));
+                else resolve([]);
+            }
             return;
         }
 
@@ -362,8 +469,18 @@ const server = http.createServer(async (req, res) => {
     }
 });
 
+// Cross-platform browser launch (Windows: explorer, macOS: open, Linux: xdg-open)
+function openBrowser(url) {
+    const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+    try {
+        const child = spawn(cmd, [url], { stdio: 'ignore', detached: true });
+        child.on('error', () => {}); // no browser/display available — non-fatal
+        child.unref();
+    } catch (e) { /* non-fatal */ }
+}
+
 const PORT = 8080;
 server.listen(PORT, () => {
     console.log('GPU Monitor on port ' + PORT);
-    setTimeout(() => require('child_process').spawn('explorer', ['http://localhost:' + PORT]), 500);
+    setTimeout(() => openBrowser('http://localhost:' + PORT), 500);
 });
